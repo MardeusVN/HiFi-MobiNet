@@ -1,0 +1,5 @@
+Original_Text	Phonemes
+Ho Chi Minh is the beautiful city.	h ˈ o ʊ k ˈ a ɪ m ˈ ɪ n ɪ z ð ə b j ˈ u ː ɾ i f ə l s ˈ ɪ ɾ i .
+I really love eating pho and banh mi in Da Nang.	a ɪ ɹ ˈ i ə l i l ˈ ʌ v ˈ i ː ɾ ɪ ŋ f ˈ o ʊ æ n d b ˈ æ n m ˈ a ɪ ɪ n d ˈ ɑ ː n ˈ æ ŋ .
+My friend is from Dalat, it is very cold there.	m a ɪ f ɹ ˈ ɛ n d ɪ z f ɹ ʌ m d ˈ æ l æ t , ɪ ɾ ɪ z v ˈ ɛ ɹ i k ˈ o ʊ l d ð ˈ ɛ ɹ .
+Zebra is an animal, but Da Lat is a city.	z ˈ i ː b ɹ ə ɪ z ɐ n ˈ æ n ɪ m ə l , b ˌ ʌ t d ˈ ɑ ː l ˈ æ t ɪ z ɐ s ˈ ɪ ɾ i .

@@ -1,0 +1,21 @@
+# Dataset (not pushed to git)
+LJSpeech-1.1/
+
+# Training outputs: checkpoints, preprocessed cache, logs
+training_output/
+
+# Vendored/compiled runtime binaries (piper.exe, DLLs, espeak data)
+piper/
+
+# Scratch/temp
+_tmp_full_check/
+
+# Python
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyd
+*.so
+
+# Claude Code internal state
+.claude/

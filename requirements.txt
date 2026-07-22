@@ -1,0 +1,36 @@
+Cython
+librosa>=0.9.2,<1
+# torch<2 (pinned below) was built against NumPy's 1.x C-API; numpy>=2
+# crashes on any tensor<->numpy conversion (RuntimeError: Numpy is not
+# available) at import/runtime, not just a compatibility warning.
+numpy>=1.19.0,<2
+onnxruntime>=1.11.0
+torch>=1.11.0,<2
+tqdm
+
+# pytorch-lightning 1.7.x (needed for the vits training loop's multi-
+# optimizer training_step API, removed in Lightning 2.x) ships wheel
+# metadata with a malformed dependency specifier ("torch>=1.9.*") that
+# pip>=24.1 refuses to parse at all -- install with pip<24.1 and --no-deps,
+# then its own actual (unpinned-here) requirements manually:
+#   python -m pip install "pip<24.1"
+#   python -m pip install "pytorch-lightning~=1.7.0" --no-deps
+#   python -m pip install "torchmetrics<0.12" "pyDeprecate>=0.3.1" \
+#       "tensorboard>=2.9.1" "setuptools<81"
+# (torchmetrics/setuptools need those upper bounds too: a plain `pip
+# install torchmetrics` silently pulls in torch>=2, and setuptools>=81
+# drops pkg_resources, which pytorch-lightning 1.7.x still imports.)
+pytorch-lightning~=1.7.0
+torchmetrics<0.12
+setuptools<81
+
+# Used by banhmi_train.mixed_lang (inference-only, see say.py
+# --detect-vietnamese) for word-level language detection (falls back on
+# this for names not in its VI_DICT).
+lingua-language-detector
+
+# banhmi_phonemize (BanhmiTTS's own espeak-ng phonemizer, independent
+# reimplementation of piper_phonemize) is NOT installed from this file --
+# build it from source:
+#   powershell -File third_party\build_banhmi_phonemize.ps1
+# See third_party/README.md for details.

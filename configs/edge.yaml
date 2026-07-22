@@ -1,0 +1,71 @@
+# Exact replica of EdgeTTS's actual default config -- `--quality medium`
+# (piper_train/__main__.py: default="medium"), which is what EdgeTTS runs
+# with unless you explicitly pass --quality x-low/high. Every value below
+# is spelled out explicitly (not left to banhmi_train's own code defaults),
+# so this file stays a trustworthy pinned reference even if banhmi_train's
+# own defaults ever drift.
+#
+# One real difference caught: EdgeTTS's PosteriorEncoder WaveNet depth is
+# hardcoded to 16 in its models.py (`PosteriorEncoder(..., 5, 1, 16, ...)`)
+# -- banhmi_train's own current default is 12 (deliberately reduced earlier
+# for faster training; training-only, doesn't affect the exported model).
+# This file restores 16 to match EdgeTTS exactly.
+#
+# use_transformer_flows / use_mrd / use_duration_discriminator: EdgeTTS's
+# own code creates these unconditionally (no toggle exists there at all,
+# always True) -- banhmi_train added the ability to turn them off, but
+# defaults to True already, matching EdgeTTS's actual behavior.
+#
+# Usage:
+#   python -m banhmi_train.train --dataset-dir <dir> --config configs/edge.yaml --batch-size <N> ...
+
+# TextEncoder / PosteriorEncoder / Flow / DurationPredictor width
+hidden_channels: 192
+inter_channels: 192
+filter_channels: 768
+n_heads: 2
+n_layers: 6
+kernel_size: 3
+p_dropout: 0.1
+
+# Generator (EdgeTTS's `medium` tier -- lighter resblock, 3 upsample stages)
+resblock: "2"
+resblock_kernel_sizes: [3, 5, 7]
+resblock_dilation_sizes: [[1, 2], [2, 6], [3, 12]]
+upsample_rates: [8, 8, 4]
+upsample_initial_channel: 256
+upsample_kernel_sizes: [16, 16, 8]
+
+# EdgeTTS's README says "Snake1d activation (BigVGAN-style)" explicitly --
+# verified, no SnakeBeta anywhere in its source. SnakeBeta (separate
+# learnable alpha/beta) is a BanhmiTTS-only addition that defaults to True
+# in banhmi_train's own code; set false here to match EdgeTTS exactly.
+use_snake_beta: true
+
+# Duration predictor
+use_sdp: true
+
+# Flow (ResidualCouplingBlock) -- EdgeTTS hardcodes kernel_size=5,
+# dilation_rate=1, n_flows=4, use_transformer_flows=True unconditionally
+flow_kernel_size: 5
+flow_dilation_rate: 1
+flow_n_flows: 4
+use_transformer_flows: true
+
+# Noise-scaled MAS: verified not present anywhere in EdgeTTS's source at
+# all (unlike transformer_flows/mrd/duration_discriminator, which EdgeTTS
+# has unconditionally -- this one EdgeTTS genuinely lacks). BanhmiTTS-only
+# addition, defaults to False in its own code already, so this is a no-op
+# override -- listed here only so this file stays a complete, explicit
+# snapshot of every option.
+use_noise_scaled_mas: true
+
+# PosteriorEncoder (training-only) -- EdgeTTS hardcodes kernel_size=5,
+# dilation_rate=1, n_layers=16 unconditionally
+posterior_encoder_kernel_size: 5
+posterior_encoder_dilation_rate: 1
+posterior_encoder_layers: 16
+
+# Discriminators (training-only) -- EdgeTTS creates both unconditionally
+use_mrd: true
+use_duration_discriminator: true

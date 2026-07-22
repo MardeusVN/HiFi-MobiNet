@@ -1,0 +1,43 @@
+# Custom "banhmi" preset: narrower TextEncoder/PosteriorEncoder/Flow/Duration
+# Predictor than `medium` (hidden_channels 192->128, filter_channels 768->512),
+# but Generator (dec) and inter_channels are left untouched -- the info
+# "bandwidth" feeding the vocoder and the vocoder itself stay exactly as
+# heavy as `medium`, so this shrinks the exported model (~51% fewer params:
+# 23.1M -> 11.3M) without touching the part that actually dominates
+# inference speed (measured -- see conversation history).
+#
+# Usage:
+#   python -m banhmi_train.train --dataset-dir <dir> --config configs/banhmi.yaml --batch-size <N> ...
+# (--quality is ignored once these are set here; inter_channels/resblock/
+# upsample_* intentionally omitted so they keep the `medium` defaults.)
+
+hidden_channels: 128
+inter_channels: 128 
+filter_channels: 512
+
+num_val_examples: 100           # checked periodically during training
+num_test_examples: 500          # never touched until the very end
+num_audio_samples: 5      
+
+n_layers: 6                   
+n_heads: 2
+
+resblock: "2"                          
+resblock_kernel_sizes: [3, 5, 7]
+resblock_dilation_sizes: [[1, 2], [2, 6], [3, 12]]
+upsample_rates: [8, 8, 4]              
+upsample_initial_channel: 256          
+upsample_kernel_sizes: [16, 16, 8]
+
+flow_n_flows: 4
+flow_kernel_size: 5
+flow_dilation_rate: 1
+use_transformer_flows: true    # VITS2-style self-attention per flow step (matches VITS2's
+                                  # own reference config). false = plain WN-only flow (lighter,
+                                  # matches vanilla VITS/Piper baseline).
+
+posterior_encoder_layers: 12   # WaveNet depth inside PosteriorEncoder (enc_q)
+posterior_encoder_kernel_size: 5
+posterior_encoder_dilation_rate: 1
+use_mrd: true                  # UnivNet-style multi-resolution STFT discriminator
+use_duration_discriminator: true  # VITS2-style duration discriminator
