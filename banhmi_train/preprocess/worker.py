@@ -16,8 +16,10 @@ from typing import Optional
 
 from banhmi_phonemize import phonemize_espeak, phoneme_ids_espeak
 
+import torch
+
 from .dataset import Utterance
-from .norm_audio import cache_norm_audio
+from .norm_audio import cache_f0, cache_norm_audio
 
 _LOGGER = logging.getLogger("banhmi_train.preprocess.worker")
 
@@ -67,6 +69,10 @@ def process_utterance(utt: Utterance) -> Optional[Utterance]:
         if not _skip_audio:
             utt.audio_norm_path, utt.audio_spec_path = cache_norm_audio(
                 utt.audio_path, _cache_dir, _sample_rate
+            )
+            num_mel_frames = torch.load(utt.audio_spec_path).shape[-1]
+            utt.audio_f0_path = cache_f0(
+                utt.audio_norm_path, _cache_dir, _sample_rate, num_mel_frames
             )
 
         return utt

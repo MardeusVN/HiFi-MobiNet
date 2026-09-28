@@ -1,0 +1,65 @@
+# Same as banhmi_vocos.yaml, plus F0Predictor + decoder F0 conditioning
+# (use_f0), wired only into the Vocos generator (banhmi_train/Vocos/) --
+# the HiFi-GAN-family Generator doesn't accept an f0 kwarg at all, so this
+# key is meaningless without use_vocos: true.
+#
+# This project's own F0 pathway (banhmi_train/vits/modules/f0_predictor.py,
+# synthesizer.py) deliberately differs from upstream EdgeTTS's: EdgeTTS
+# trains the decoder on the raw per-frame ground-truth F0 contour but only
+# ever conditions it on a piecewise-constant (phoneme-flat) F0 at inference
+# (a hard MAS alignment can't produce anything smoother) -- a train/inference
+# mismatch the decoder never sees coming. Here, training re-expands the same
+# ground-truth per-phoneme F0 average through the identical hard alignment
+# inference uses, so training and inference see the exact same signal shape.
+#
+# Requires preprocessing with F0 extraction (banhmi_train/preprocess's own
+# cache_f0, pyworld-based) -- run unconditionally for every utterance
+# regardless of this flag, so no re-preprocessing is needed to toggle it.
+#
+# Usage:
+#   python -m banhmi_train.train --dataset-dir <dir> --config configs/banhmi_vocos_f0.yaml --batch-size <N> ...
+
+# TextEncoder / PosteriorEncoder / Flow / DurationPredictor width
+hidden_channels: 192
+inter_channels: 192
+filter_channels: 768
+n_heads: 2
+n_layers: 6
+kernel_size: 3
+p_dropout: 0.1
+
+# Vocos Generator + Vocos's own discriminators (5-branch MPD without
+# DiscriminatorS + DAC-style multi-band MultiResolutionDiscriminator),
+# always paired together -- not optional the way use_mrd is for the
+# HiFi-GAN-family recipe. dim/intermediate_dim/num_layers match the
+# released Vocos 24kHz checkpoint's own config (~13.9M Generator params).
+use_vocos: true
+vocos_dim: 512
+vocos_intermediate_dim: 1536
+vocos_num_layers: 8
+
+# F0Predictor + decoder F0 conditioning (Vocos-only, see header comment).
+use_f0: true
+
+# Hinge loss (banhmi_train/Vocos/losses.py), not this project's usual LSGAN
+# -- required pairing for Vocos's discriminators, verified against
+# vocos/experiment.py's training_step. mrd_loss_coeff matches the actual
+# released 24kHz checkpoint's config (the class's own default is 1.0).
+vocos_mrd_loss_coeff: 0.1
+
+# Flow (ResidualCouplingBlock) -- always VITS2-style transformer-in-flow,
+# no plain-WN-flow toggle exists anymore.
+flow_kernel_size: 5
+flow_dilation_rate: 1
+flow_n_flows: 4
+
+# VITS2's noise-scaled MAS -- always active (no toggle), anneals from
+# initial to 0 over training via these two knobs.
+mas_noise_scale_initial: 0.01
+mas_noise_scale_decay: 0.000002
+
+# PosteriorEncoder (training-only, discarded before ONNX export) -- matches
+# EdgeTTS/vanilla Piper's own hardcoded WaveNet depth of 16.
+posterior_encoder_kernel_size: 5
+posterior_encoder_dilation_rate: 1
+posterior_encoder_layers: 16

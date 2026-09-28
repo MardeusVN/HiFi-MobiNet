@@ -1,0 +1,4 @@
+﻿Model,Checkpoint,% Training hoàn thành,WER (mean) ↓,UTMOSv2 (mean) ↑,UTMOS22 (mean) ↑,RTF (mean, CPU, sạch) ↓,Ghi chú
+HiFi-GAN baseline (resblock=2),"epoch=1489/1500, val_loss_mel=19.7882",99% (hội tụ đầy đủ),0.1206,3.136,3.969,0.0429,"Đo lại SẠCH lần 2 (máy rảnh hoàn toàn) - gần như y hệt số cũ (0.0431/3.139/0.1197), xác nhận số cũ vốn đã đáng tin"
+MRF (resblock=mrf, expansion=1,1,1) + MRD,"epoch=480/500, val_loss_mel=20.2203",96% (training đã dừng hẳn),0.1110,3.348,Không đo (script khác nhau),0.0373,"Đo SẠCH - không còn training nào chạy song song"
+Chênh lệch (MRF - baseline),,,-0.0096 (TỐT HƠN ~8.0%),+0.212 (TỐT HƠN ~6.8%),,-0.0056 (NHANH HƠN ~13.0%),"MRF THẮNG CẢ 3 TRỤC đã đo (WER, UTMOSv2, RTF) - cả hai đều đo sạch, không nhiễu tài nguyên"

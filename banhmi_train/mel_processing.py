@@ -28,24 +28,33 @@ def spectrogram_torch(
     if torch.max(torch.abs(y)) > 1.0:
         _LOGGER.warning("Audio exceeds the expected [-1, 1] range")
 
-    window = _get_hann_window(win_size, y)
+    # cuFFT (what torch.stft dispatches to on CUDA) rejects bf16/fp16 tensors
+    # outright ("cuFFT doesn't support tensor of type: BFloat16"), so under
+    # bf16-mixed precision (this project's own intended training mode -- see
+    # configs/banhmiv1.yaml's precision: bf16-mixed) this crashes unless the
+    # STFT itself runs in fp32. Autocast disabled + explicit .float() forces
+    # that regardless of the ambient precision context; the magnitude output
+    # then upcasts whatever downstream op consumes it back to bf16 as normal.
+    with torch.autocast(device_type=y.device.type, enabled=False):
+        y = y.float()
+        window = _get_hann_window(win_size, y)
 
-    pad = (n_fft - hop_size) // 2
-    y = torch.nn.functional.pad(y.unsqueeze(1), (pad, pad), mode="reflect").squeeze(1)
+        pad = (n_fft - hop_size) // 2
+        y = torch.nn.functional.pad(y.unsqueeze(1), (pad, pad), mode="reflect").squeeze(1)
 
-    spec = torch.stft(
-        y,
-        n_fft,
-        hop_length=hop_size,
-        win_length=win_size,
-        window=window,
-        center=False,
-        pad_mode="reflect",
-        onesided=True,
-        return_complex=True,
-    )
+        spec = torch.stft(
+            y,
+            n_fft,
+            hop_length=hop_size,
+            win_length=win_size,
+            window=window,
+            center=False,
+            pad_mode="reflect",
+            onesided=True,
+            return_complex=True,
+        )
 
-    return torch.sqrt(spec.real.pow(2) + spec.imag.pow(2) + 1e-6)
+        return torch.sqrt(spec.real.pow(2) + spec.imag.pow(2) + 1e-6)
 
 
 def _get_mel_filterbank(

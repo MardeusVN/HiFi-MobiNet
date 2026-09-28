@@ -55,22 +55,12 @@ def main() -> None:
         "--use-bigvgan", action=argparse.BooleanOptionalAction, default=None,
         help=(
             "Bundle the BigVGAN paper's own recipe (SnakeBeta activation + MPD + MRD) as one "
-            "switch -- equivalent to --use-snake-beta --use-mrd together. Leave unset to control "
-            "them individually (e.g. SnakeBeta without MRD, or vice versa). CLI-only: this "
-            "bundling logic lives in this file's main(), not in VitsModel, so `use_bigvgan: true` "
-            "inside a --config YAML has no effect -- set use_snake_beta/use_mrd there instead."
-        ),
-    )
-    parser.add_argument(
-        "--use-vits2", action=argparse.BooleanOptionalAction, default=None,
-        help=(
-            "Bundle VITS2's own actual contributions we've implemented (transformer-flow "
-            "coupling layers + duration discriminator + noise-scaled MAS) as one switch -- "
-            "equivalent to --use-transformer-flows --use-duration-discriminator "
-            "--use-noise-scaled-mas together. Does NOT cover VITS2's mel-posterior-encoder, "
-            "which isn't ported (see conversation history) -- this bundle is only what's "
-            "actually implemented. CLI-only, same as --use-bigvgan: has no effect written "
-            "inside a --config YAML."
+            "switch -- equivalent to --use-snake --use-mrd together (matches EdgeTTS's own "
+            "--use-bigvgan). --no-use-bigvgan gives the vanilla-Piper baseline: plain LeakyReLU "
+            "(no Snake) + MPD only, no MRD. Leave unset to control them individually. CLI-only: "
+            "this bundling logic lives in this file's main(), not in VitsModel, so "
+            "`use_bigvgan: true` inside a --config YAML has no effect -- set use_snake/use_mrd "
+            "there instead."
         ),
     )
     Trainer.add_argparse_args(parser)
@@ -83,8 +73,43 @@ def main() -> None:
     if not args.default_root_dir:
         args.default_root_dir = args.dataset_dir
 
+    # cudnn.benchmark only pays off when the *same* shape recurs often enough
+    # to amortize its search cost. VitsModel.train_dataloader() buckets
+    # batches by cached spectrogram length (LengthBucketBatchSampler,
+    # matching banhmi_tts's own sampler) -- an earlier version bucketed by
+    # phoneme count instead, which measured WORSE than no bucketing at all
+    # (14.2 vs 37.8 samples/s, both benchmark=True): phoneme count only
+    # stabilizes TextEncoder/StochasticDurationPredictor shapes, not the
+    # PosteriorEncoder/flow, which run on the *full* spectrogram/latent
+    # length (SynthesizerTrn.forward() only crops to segment_size afterward)
+    # and dominate compute alongside the Generator. Re-measure before
+    # changing this again -- see git history for the phoneme-bucketing
+    # numbers this replaced.
     torch.backends.cudnn.benchmark = True
+    # TF32 matmul on Ampere/Ada tensor cores (RTX 4070 Ti here) -- banhmi_tts
+    # sets this too; this codebase was missing it.
+    torch.set_float32_matmul_precision("high")
     torch.manual_seed(args.seed)
+
+    # LengthBucketBatchSampler shards across DDP ranks itself (num_replicas/
+    # rank, set from torch.distributed inside train_dataloader()) -- with
+    # PL's default replace_sampler_ddp=True, the Trainer would additionally
+    # wrap it in a DistributedSampler, double-sharding the data.
+    #
+    # NOTE on --strategy: use plain "ddp" (PL 1.7's registry only has an
+    # explicit "..._find_unused_parameters_false" alias -- plain "ddp"
+    # already defaults find_unused_parameters=True). Don't pass any
+    # "_find_unused_parameters_false" variant: this model genuinely needs
+    # unused-parameter tolerance. PL wraps model_g/model_d/model_d_mrd/
+    # model_d_dur as one DDP unit, but training_step_g's backward only
+    # touches model_g's parameters and training_step_d's backward only
+    # touches the discriminators' -- every step, DDP sees a backward pass
+    # that skips half the wrapped parameters. Confirmed by trying _false:
+    # "Expected to have finished reduction in the prior iteration... Parameter
+    # indices which did not receive grad". _true costs one extra autograd-
+    # graph traversal per step to tolerate that; there's no way to avoid it
+    # without splitting model_g/model_d into separate DDP-wrapped modules.
+    args.replace_sampler_ddp = False
 
     config_path = args.dataset_dir / "config.json"
     dataset_path = args.dataset_dir / "dataset.jsonl"
@@ -97,8 +122,45 @@ def main() -> None:
 
     trainer = Trainer.from_argparse_args(args)
     if args.checkpoint_epochs is not None:
-        trainer.callbacks = [ModelCheckpoint(every_n_epochs=args.checkpoint_epochs)]
-        _LOGGER.debug("Checkpoints will be saved every %s epoch(s)", args.checkpoint_epochs)
+        # save_top_k=3 + monitor="loss_mel" keeps the 3 best-mel checkpoints
+        # (best-*.ckpt) instead of accumulating one file per `every_n_epochs`
+        # interval -- still bounded (important for long runs; e.g. 2000
+        # epochs writing one file per epoch would be unbounded ~900MB/epoch),
+        # but keeps a little retroactive history instead of only 1 (a single
+        # best-so-far silently overwrites every prior snapshot, which cost us
+        # the ability to bisect exactly when a duration-predictor collapse
+        # started in an earlier run -- see SynthesizerTrn.infer()'s own
+        # collapse warning, added for the same reason).
+        # save_last=True additionally keeps a rolling last.ckpt for resuming
+        # a killed/crashed run without losing all progress since the last
+        # best checkpoint. Monitors "val_loss_mel" (validation_step-only,
+        # non-adversarial reconstruction loss -- matches EdgeTTS's own
+        # val_loss_mel) rather than "loss_mel" (also logged from real
+        # training steps, so noisier as a "best model" signal).
+        trainer.callbacks = [
+            ModelCheckpoint(
+                # Fixed, resume-stable location -- deliberately NOT the
+                # logger's auto-versioned lightning_logs/version_N/checkpoints
+                # (every resume bumps N, and PL's ModelCheckpoint refuses to
+                # restore best_model_score/best_k_models whenever dirpath
+                # differs from the checkpoint being resumed -- observed in
+                # practice: a resume could silently save a worse checkpoint
+                # as the new "best" because it no longer knew the real best).
+                # A stable dirpath means dirpath never changes across
+                # resumes, so that restoration actually happens.
+                dirpath=str(Path(args.default_root_dir) / "checkpoints"),
+                every_n_epochs=args.checkpoint_epochs,
+                monitor="val_loss_mel",
+                mode="min",
+                save_top_k=3,
+                save_last=True,
+                filename="best-{epoch}-{val_loss_mel:.4f}",
+            )
+        ]
+        _LOGGER.debug(
+            "Checkpoints: best (by val_loss_mel) + last, checked every %s epoch(s)",
+            args.checkpoint_epochs,
+        )
 
     dict_args = vars(args)
     if args.quality == "x-low":
@@ -114,13 +176,8 @@ def main() -> None:
         dict_args["upsample_kernel_sizes"] = (16, 16, 4, 4)
 
     if args.use_bigvgan is not None:
-        dict_args["use_snake_beta"] = args.use_bigvgan
+        dict_args["use_snake"] = args.use_bigvgan
         dict_args["use_mrd"] = args.use_bigvgan
-
-    if args.use_vits2 is not None:
-        dict_args["use_transformer_flows"] = args.use_vits2
-        dict_args["use_duration_discriminator"] = args.use_vits2
-        dict_args["use_noise_scaled_mas"] = args.use_vits2
 
     if args.config is not None:
         with open(args.config, "r", encoding="utf-8") as config_yaml_file:
@@ -135,7 +192,15 @@ def main() -> None:
         **dict_args,
     )
 
-    trainer.fit(model)
+    # ckpt_path= here (not relying on Trainer(resume_from_checkpoint=...)
+    # alone, set from --resume_from_checkpoint above) matters: PL's
+    # trainer.fit() only takes the *full* restore path -- including
+    # restoring ModelCheckpoint's own best-score tracking -- when ckpt_path
+    # is passed directly to fit(). Without this, each resume's
+    # ModelCheckpoint starts its "best" comparison from scratch, so a worse
+    # checkpoint than one already on disk can get saved as a new "best"
+    # (observed in practice across several resumes of the same run).
+    trainer.fit(model, ckpt_path=args.resume_from_checkpoint)
 
     # test_split is held out entirely until now -- a final, unbiased check
     # on data the training process never touched for monitoring/tuning.

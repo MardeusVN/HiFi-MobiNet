@@ -32,12 +32,18 @@ upsample_kernel_sizes: [16, 16, 8]
 flow_n_flows: 4
 flow_kernel_size: 5
 flow_dilation_rate: 1
-use_transformer_flows: true    # VITS2-style self-attention per flow step (matches VITS2's
-                                  # own reference config). false = plain WN-only flow (lighter,
-                                  # matches vanilla VITS/Piper baseline).
+# use_transformer_flows / use_duration_discriminator: VITS2's flow +
+# duration discriminator are always active now (baked into the
+# architecture, no toggle) -- no override needed here anymore.
 
-posterior_encoder_layers: 12   # WaveNet depth inside PosteriorEncoder (enc_q)
+posterior_encoder_layers: 12   # WaveNet depth inside PosteriorEncoder (enc_q) -- lighter
+                                # than the code default of 16, for faster training, matching
+                                # this preset's overall narrower/faster philosophy above.
 posterior_encoder_kernel_size: 5
 posterior_encoder_dilation_rate: 1
+
+# BigVGAN-style novelty on top of the VITS2 baseline above -- code default
+# is now vanilla-Piper LeakyReLU/MPD-only (off), so this project's own
+# preset turns it on explicitly rather than relying on an implicit default.
+use_snake: true                # SnakeBeta activation instead of plain LeakyReLU
 use_mrd: true                  # UnivNet-style multi-resolution STFT discriminator
-use_duration_discriminator: true  # VITS2-style duration discriminator

@@ -134,6 +134,7 @@ def main() -> None:
                     "phoneme_ids": utt.phoneme_ids,
                     "audio_norm_path": utt.audio_norm_path,
                     "audio_spec_path": utt.audio_spec_path,
+                    "audio_f0_path": utt.audio_f0_path,
                 }
                 json.dump(utt_dict, dataset_file, ensure_ascii=False, cls=PathEncoder)
                 print("", file=dataset_file)

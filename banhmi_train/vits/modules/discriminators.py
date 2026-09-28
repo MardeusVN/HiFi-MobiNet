@@ -114,6 +114,8 @@ class DiscriminatorR(nn.Module):
     def __init__(self, resolution: typing.Tuple[int, int, int], use_spectral_norm: bool = False):
         super().__init__()
         self.resolution = resolution
+        _, _, win_length = resolution
+        self.register_buffer("hann_window", torch.hann_window(win_length))
         norm_f = spectral_norm if use_spectral_norm else weight_norm
         self.convs = nn.ModuleList(
             [
@@ -131,10 +133,13 @@ class DiscriminatorR(nn.Module):
         x = x.squeeze(1)
         pad = (n_fft - hop_length) // 2
         x = F.pad(x, (pad, pad), mode="reflect")
-        spec = torch.stft(
-            x, n_fft=n_fft, hop_length=hop_length, win_length=win_length,
-            center=False, return_complex=True,
-        )
+        # cuFFT doesn't support half/bf16 input, so this must stay fp32 even
+        # when the rest of the discriminator runs under autocast.
+        with torch.autocast(device_type=x.device.type, enabled=False):
+            spec = torch.stft(
+                x.float(), n_fft=n_fft, hop_length=hop_length, win_length=win_length,
+                window=self.hann_window, center=False, return_complex=True,
+            )
         return torch.abs(spec).unsqueeze(1)  # [B, 1, Freq, Frames]
 
     def forward(self, x: torch.Tensor):

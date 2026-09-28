@@ -22,44 +22,61 @@ class LayerNorm(nn.Module):
         return x.transpose(1, -1)
 
 
-class Snake1d(nn.Module):
-    """Snake activation (BigVGAN): x + (1/alpha) * sin(alpha * x)^2.
-
-    Learnable per-channel alpha gives the activation a periodic inductive
-    bias that suits raw waveform generation better than LeakyReLU. This is
-    what EdgeTTS's own code actually uses (verified: their README says
-    "Snake1d activation (BigVGAN-style)", not SnakeBeta -- see
-    conversation history).
+class LeakyReLUActivation(nn.Module):
+    """Vanilla HiFi-GAN/VITS activation (no Snake at all), matching the
+    signature of SnakeBeta so it can be used as a drop-in `activation_cls`
+    -- this is what plain Piper/EdgeTTS's `use_snake=False` path uses
+    instead of the Snake variant.
     """
+
+    _SLOPE = 0.1
 
     def __init__(self, channels: int):
         super().__init__()
-        self.alpha = nn.Parameter(torch.ones(1, channels, 1))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return x + (1.0 / (self.alpha + 1e-9)) * torch.sin(self.alpha * x) ** 2
+        return F.leaky_relu(x, self._SLOPE)
 
 
 class SnakeBeta(nn.Module):
     """Snake-Beta activation (later BigVGAN revision): x + (1/beta) *
     sin(alpha * x)^2, with alpha (frequency) and beta (amplitude) as two
     *separate* learnable parameters instead of Snake1d's single alpha
-    reused for both roles. Both are stored and updated in log-space
-    (matching BigVGAN's own released configs, e.g. bigvgan_base_24khz),
-    which keeps them positive and stabilizes training instead of the raw
-    parameter potentially crossing zero.
+    reused for both roles.
 
     Not present in EdgeTTS (which uses plain Snake1d) -- this is a
-    BanhmiTTS-only addition, opt-in via `use_snake_beta`.
+    BanhmiTTS-only addition, opt-in via `use_snake`.
     """
+
+    # Bounds alpha/beta to [_min, _max] instead of BigVGAN's usual
+    # log-space (exp()) reparameterization -- see the TEMPORARY EXPERIMENT
+    # note below. A hard abs()+clamp() floor has a failure mode log-space
+    # doesn't: right at the floor, d(1/beta)/dbeta = -1/beta^2, so a floor
+    # as small as the original 1e-9 turns a single optimizer step that
+    # pushes beta toward 0 into a ~1e18-magnitude gradient -- enough to
+    # overflow to Inf under fp16/bf16 autocast well before any global
+    # grad-norm clip sees it, and Inf/NaN then propagates through every
+    # downstream layer for the rest of training. 1e-2 keeps 1/beta (and
+    # its gradient) bounded to a still-generous but finite dynamic range;
+    # the upper clamp guards the symmetric case where alpha grows
+    # unbounded and sin(alpha*x)'s gradient (x*cos(alpha*x)) blows up.
+    _min = 1e-2
+    _max = 1e2
 
     def __init__(self, channels: int):
         super().__init__()
-        self.log_alpha = nn.Parameter(torch.zeros(1, channels, 1))
-        self.log_beta = nn.Parameter(torch.zeros(1, channels, 1))
-        self._eps = 1e-9
+        # TEMPORARY EXPERIMENT (2026-08-26): swapped to EdgeTTS's linear-
+        # space abs()+clamp() reparameterization (piper_train/vits/modules.py)
+        # instead of this file's previous log-space exp() one, to test
+        # whether the reparameterization difference explains a measured
+        # UTMOS gap. Revert to log_alpha/log_beta + exp() after the test.
+        # The clamp bounds above were tightened from the original 1e-9
+        # floor (NaN-prone, see docstring) without reverting the
+        # experiment itself.
+        self.alpha = nn.Parameter(torch.ones(1, channels, 1))
+        self.beta = nn.Parameter(torch.ones(1, channels, 1))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        alpha = torch.exp(self.log_alpha)
-        beta = torch.exp(self.log_beta)
-        return x + (1.0 / (beta + self._eps)) * torch.sin(alpha * x) ** 2
+        alpha = self.alpha.abs().clamp(min=self._min, max=self._max)
+        beta = self.beta.abs().clamp(min=self._min, max=self._max)
+        return x + (1.0 / beta) * torch.sin(alpha * x) ** 2

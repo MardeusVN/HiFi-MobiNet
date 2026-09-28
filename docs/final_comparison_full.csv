@@ -1,0 +1,5 @@
+﻿Model,RTF (mean) ↓,UTMOSv2 (mean) ↑,WER (mean) ↓,Generator params (chỉ vocoder),Generator size FP32 (MB),Toàn bộ pipeline ONNX (MB),Ghi chú kích thước
+baseline FP32,0.0434,3.125,0.1230,"1.664.768","6.35","65.8 (chưa quantize)","Generator = resblock ""2"" dense conv"
+MRF FP32,0.0374,3.529,0.1136,"1.157.024","4.41","63.9 (chưa quantize)","Generator = resblock ""mrf"" depthwise-separable"
+baseline QAT (flow+enc_p+dp quantize, dec giữ FP32),0.0508,3.549,0.0786,"1.664.768 (dec không đổi)","6.35 (dec không đổi)","23.0 (quantize flow/enc_p/dp, dec giữ FP32)","Cùng submodule scope với MRF QAT để so sánh công bằng"
+MRF QAT (flow+enc_p+dp quantize, dec giữ FP32),0.0461,3.650,0.0977,"1.157.024 (dec không đổi)","4.41 (dec không đổi)","21.1 (quantize flow/enc_p/dp, dec giữ FP32)","Cùng submodule scope với baseline QAT để so sánh công bằng"
