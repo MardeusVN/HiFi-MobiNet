@@ -1,14 +1,10 @@
-"""Predicts how many output frames each phoneme should last.
-
-Two variants (VITS supports either; `use_sdp` in synthesizer.py picks
-which one gets built):
-
-- DurationPredictor: deterministic regression (log-duration MSE loss),
-  simpler and used by VITS's predecessor (Glow-TTS).
-- StochasticDurationPredictor: a small normalizing flow over duration
-  itself, trained by maximum likelihood (matches how the rest of VITS is
-  trained) and sampled from at inference time -- this is VITS's actual
-  default and what every current Piper voice uses.
+"""Predicts how many output frames each phoneme should last, via a small
+normalizing flow over duration itself (StochasticDurationPredictor),
+trained by maximum likelihood (matches how the rest of VITS is trained) and
+sampled from at inference time -- this is VITS's actual default and what
+every current Piper voice uses. Always used here; the deterministic
+regression-based DurationPredictor from VITS's predecessor (Glow-TTS) is
+not implemented since nothing in this codebase ever selects it.
 """
 import math
 
@@ -18,36 +14,6 @@ from torch.nn import functional as F
 
 from ..utils.dds_conv import DDSConv
 from ..utils.flows import ConvFlow, ElementwiseAffine, Flip, Log
-from ..utils.normalization import LayerNorm
-
-
-class DurationPredictor(nn.Module):
-    def __init__(
-        self,
-        in_channels: int,
-        filter_channels: int,
-        kernel_size: int,
-        p_dropout: float,
-        gin_channels: int = 0,
-    ):
-        super().__init__()
-        self.drop = nn.Dropout(p_dropout)
-        self.conv_1 = nn.Conv1d(in_channels, filter_channels, kernel_size, padding=kernel_size // 2)
-        self.norm_1 = LayerNorm(filter_channels)
-        self.conv_2 = nn.Conv1d(filter_channels, filter_channels, kernel_size, padding=kernel_size // 2)
-        self.norm_2 = LayerNorm(filter_channels)
-        self.proj = nn.Conv1d(filter_channels, 1, 1)
-
-        if gin_channels != 0:
-            self.cond = nn.Conv1d(gin_channels, in_channels, 1)
-
-    def forward(self, x: torch.Tensor, x_mask: torch.Tensor, g=None) -> torch.Tensor:
-        x = torch.detach(x)
-        if g is not None:
-            x = x + self.cond(torch.detach(g))
-        x = self.drop(self.norm_1(torch.relu(self.conv_1(x * x_mask))))
-        x = self.drop(self.norm_2(torch.relu(self.conv_2(x * x_mask))))
-        return self.proj(x * x_mask) * x_mask
 
 
 class StochasticDurationPredictor(nn.Module):
@@ -97,6 +63,36 @@ class StochasticDurationPredictor(nn.Module):
         reverse: bool = False,
         noise_scale: float = 1.0,
     ):
+        # Normalizing flows are precision-sensitive in a way the rest of this
+        # model is not: the spline transform's bin widths come from a
+        # cumsum-then-difference, and its log-determinant terms divide by
+        # quantities that are only analytically bounded away from zero. Under
+        # bf16's ~7-bit mantissa those can round to exactly 0 / cancel, which
+        # historically produced a NaN that permanently poisoned dp's own
+        # parameters (dec/enc_p stayed healthy, so val_loss_mel kept improving
+        # and hid it). dp is tiny next to dec, so forcing fp32 here costs very
+        # little and removes that whole class of failure at its source --
+        # applied inside forward() so every call site (NLL, the duration
+        # discriminator's reverse sample, and infer()) gets it automatically.
+        with torch.autocast(device_type=x.device.type, enabled=False):
+            return self._forward_fp32(x, x_mask, w, g, reverse, noise_scale)
+
+    def _forward_fp32(
+        self,
+        x: torch.Tensor,
+        x_mask: torch.Tensor,
+        w,
+        g,
+        reverse: bool,
+        noise_scale: float,
+    ):
+        x = x.float()
+        x_mask = x_mask.float()
+        if w is not None:
+            w = w.float()
+        if g is not None:
+            g = g.float()
+
         x = torch.detach(x)
         x = self.pre(x)
         if g is not None:

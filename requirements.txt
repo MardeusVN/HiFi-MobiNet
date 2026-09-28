@@ -1,5 +1,8 @@
 Cython
 librosa>=0.9.2,<1
+# WORLD vocoder's F0 (pitch) extraction -- used by preprocess/norm_audio.py's
+# cache_f0() for --use-f0 training (banhmi_train/vits/modules/f0_predictor.py).
+pyworld
 # torch<2 (pinned below) was built against NumPy's 1.x C-API; numpy>=2
 # crashes on any tensor<->numpy conversion (RuntimeError: Numpy is not
 # available) at import/runtime, not just a compatibility warning.

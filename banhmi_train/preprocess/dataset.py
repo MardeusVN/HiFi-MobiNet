@@ -23,6 +23,7 @@ class Utterance:
     phoneme_ids: Optional[List[int]] = None
     audio_norm_path: Optional[Path] = None
     audio_spec_path: Optional[Path] = None
+    audio_f0_path: Optional[Path] = None
     missing_phonemes: "Counter[str]" = field(default_factory=Counter)
 
 
@@ -42,7 +43,13 @@ def ljspeech_dataset(input_dir: Path, skip_audio: bool = False) -> Iterable[Utte
         wav_dir = input_dir / "wavs"
 
     with open(metadata_path, "r", encoding="utf-8") as csv_file:
-        reader = csv.reader(csv_file, delimiter="|")
+        # QUOTE_NONE: LJSpeech's text column routinely contains literal `"`
+        # characters (quoted dialogue/titles) with no CSV-style escaping --
+        # with quoting left on, Python's csv module treats an unescaped `"`
+        # as opening a quoted field and silently swallows every following
+        # `|` and newline until it finds a closing `"`, merging multiple
+        # real rows into one and corrupting their text.
+        reader = csv.reader(csv_file, delimiter="|", quoting=csv.QUOTE_NONE)
         for row in reader:
             assert len(row) >= 2, "Not enough columns"
 

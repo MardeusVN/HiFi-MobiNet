@@ -35,25 +35,24 @@
                                           # Piper-community-validated departure from the
                                           # academic baseline. No published config goes lower.
 # upsample_kernel_sizes: [16, 16, 8]
-# use_snake_beta: true                   # SnakeBeta (separate learnable alpha/beta) instead
-                                          # of EdgeTTS's plain Snake1d -- BanhmiTTS-only
-                                          # addition (EdgeTTS's own README confirms Snake1d,
-                                          # not SnakeBeta). false = exact EdgeTTS match.
+# use_snake: false                       # SnakeBeta activation (BigVGAN-style) -- BanhmiTTS's
+                                          # own novelty layered on top of the VITS2 baseline
+                                          # below. Code default is off (plain LeakyReLU, vanilla
+                                          # Piper baseline); configs/banhmi.yaml turns this on
+                                          # explicitly for this project's actual training runs.
 
-# Flow (ResidualCouplingBlock) -- part of the exported model:
+# Flow (ResidualCouplingBlock) -- part of the exported model. Always
+# VITS2-style transformer-in-flow coupling; no plain-WN-flow toggle exists
+# (baked permanently into the architecture, not EdgeTTS's opt-in default):
 # flow_n_flows: 4
 # flow_kernel_size: 5
 # flow_dilation_rate: 1
-# use_transformer_flows: true    # VITS2-style self-attention per flow step (matches VITS2's
-                                  # own reference config). false = plain WN-only flow (lighter,
-                                  # matches vanilla VITS/Piper baseline).
 
 # VITS2's noise-scaled MAS -- training-only (alignment search never runs
 # at inference), decays linearly to 0 over global_step so it only affects
 # early-training alignment exploration, not the converged model. Not in
-# EdgeTTS at all (a real gap there, unlike transformer_flows/duration
-# discriminator which EdgeTTS has unconditionally).
-# use_noise_scaled_mas: false     # true to enable (BanhmiTTS default is off)
+# EdgeTTS at all. Always active (no toggle) -- these two knobs control the
+# anneal shape, not whether it runs.
 # mas_noise_scale_initial: 0.01   # matches VITS2 reference; decays to 0 by step 5000
 # mas_noise_scale_decay: 0.000002
 
@@ -61,11 +60,15 @@
 # Training-only (discarded before ONNX export -- zero effect on the
 # deployed model, only trades off training speed/memory)
 # ------------------------------------------------------------------------
-# posterior_encoder_layers: 12   # WaveNet depth inside PosteriorEncoder (enc_q)
+# posterior_encoder_layers: 16   # WaveNet depth inside PosteriorEncoder (enc_q) --
+                                  # matches EdgeTTS/vanilla Piper's own hardcoded value
 # posterior_encoder_kernel_size: 5
 # posterior_encoder_dilation_rate: 1
-# use_mrd: true                  # UnivNet-style multi-resolution STFT discriminator
-# use_duration_discriminator: true  # VITS2-style duration discriminator
+# use_mrd: false                 # UnivNet-style multi-resolution STFT discriminator --
+                                  # BigVGAN-style novelty, pairs with use_snake above.
+                                  # Code default off, banhmi.yaml turns it on explicitly.
+                                  # The duration discriminator (VITS2 baseline) is always
+                                  # active now -- no toggle exists anymore.
 
 # ------------------------------------------------------------------------
 # Pure data-loading / bookkeeping -- zero effect on model quality
@@ -80,7 +83,7 @@
 # percentage). test is held out until trainer.test() runs once after
 # training finishes; val is checked throughout training.
 # ------------------------------------------------------------------------
-# num_val_examples: 500           # checked periodically during training
+# num_val_examples: 100           # checked periodically during training -- matches EdgeTTS's own default
 # num_test_examples: 500          # never touched until the very end
 # num_audio_samples: 5            # *validation* utterances logged as listenable
                                    # audio during training -- not a metric

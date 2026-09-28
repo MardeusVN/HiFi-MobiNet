@@ -16,7 +16,7 @@ from .vits.training import VitsModel
 
 _LOGGER = logging.getLogger("banhmi_train.export_onnx")
 
-_OPSET_VERSION = 15
+_OPSET_VERSION = 18
 
 
 def main() -> None:
@@ -41,11 +41,16 @@ def main() -> None:
     model_g.eval()
     with torch.no_grad():
         model_g.dec.remove_weight_norm()
+        model_g.flow.remove_weight_norm()
 
     def infer_forward(text, text_lengths, scales):
         noise_scale, length_scale, noise_scale_w = scales[0], scales[1], scales[2]
         audio = model_g.infer(
-            text, text_lengths, noise_scale=noise_scale, length_scale=length_scale, noise_scale_w=noise_scale_w
+            text, text_lengths, noise_scale=noise_scale, length_scale=length_scale, noise_scale_w=noise_scale_w,
+            # torch.onnx has no op for aten::complex, so a Vocos decoder must
+            # route through its real-valued matmul-IDFT path to be traceable
+            # -- a no-op kwarg for every other Generator family.
+            onnx_export=True,
         )[0].unsqueeze(1)
         return audio
 
@@ -69,6 +74,13 @@ def main() -> None:
             "input_lengths": {0: "batch_size"},
             "output": {0: "batch_size", 1: "time"},
         },
+        # torch >=2.5 defaults torch.onnx.export to the dynamo-based exporter,
+        # which doesn't accept `dynamic_axes` (uses `dynamic_shapes` instead)
+        # and requires the optional `onnxscript` package. This script was
+        # written for and tested against the legacy TorchScript-based
+        # exporter (hence `dynamic_axes` above) -- pin it explicitly rather
+        # than switching APIs.
+        dynamo=False,
     )
 
     _LOGGER.info("Exported model to %s", output_path)

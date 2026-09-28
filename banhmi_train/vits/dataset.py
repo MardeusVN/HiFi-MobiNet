@@ -22,6 +22,7 @@ class Utterance:
     audio_norm_path: Path
     audio_spec_path: Path
     text: Optional[str] = None
+    audio_f0_path: Optional[Path] = None
 
 
 @dataclass
@@ -30,6 +31,7 @@ class UtteranceTensors:
     spectrogram: torch.Tensor
     audio_norm: torch.Tensor
     text: Optional[str] = None
+    f0: Optional[torch.Tensor] = None
 
 
 @dataclass
@@ -40,6 +42,7 @@ class Batch:
     spectrogram_lengths: torch.Tensor
     audios: torch.Tensor
     audio_lengths: torch.Tensor
+    f0s: Optional[torch.Tensor] = None
 
 
 class VitsDataset(Dataset):
@@ -58,6 +61,7 @@ class VitsDataset(Dataset):
             audio_norm=torch.load(utt.audio_norm_path),
             spectrogram=torch.load(utt.audio_spec_path),
             text=utt.text,
+            f0=torch.load(utt.audio_f0_path) if utt.audio_f0_path is not None else None,
         )
 
     @staticmethod
@@ -74,11 +78,13 @@ class VitsDataset(Dataset):
                     if max_phoneme_ids is not None and len(phoneme_ids) > max_phoneme_ids:
                         num_skipped += 1
                         continue
+                    f0_path = utt_dict.get("audio_f0_path")
                     yield Utterance(
                         phoneme_ids=phoneme_ids,
                         audio_norm_path=Path(utt_dict["audio_norm_path"]),
                         audio_spec_path=Path(utt_dict["audio_spec_path"]),
                         text=utt_dict.get("text"),
+                        audio_f0_path=Path(f0_path) if f0_path else None,
                     )
                 except Exception:
                     _LOGGER.exception("Error on line %s of %s", line_idx + 1, dataset_path)
@@ -105,6 +111,11 @@ class UtteranceCollate:
         phonemes_padded = torch.zeros(num_utterances, max_phonemes_length, dtype=torch.long)
         spec_padded = torch.zeros(num_utterances, num_mels, max_spec_length)
         audio_padded = torch.zeros(num_utterances, 1, max_audio_length)
+        # None (not all-zero) when any utterance in the batch has no cached F0
+        # tensor -- keeps datasets preprocessed before F0 support existed
+        # usable, just with --use-f0 unavailable for those batches.
+        has_f0 = all(u.f0 is not None for u in utterances)
+        f0_padded = torch.zeros(num_utterances, max_spec_length) if has_f0 else None
 
         phoneme_lengths = torch.zeros(num_utterances, dtype=torch.long)
         spec_lengths = torch.zeros(num_utterances, dtype=torch.long)
@@ -127,6 +138,9 @@ class UtteranceCollate:
             audio_padded[i, :, :n_audio] = utt.audio_norm
             audio_lengths[i] = n_audio
 
+            if f0_padded is not None:
+                f0_padded[i, :n_spec] = utt.f0[:n_spec]
+
         return Batch(
             phoneme_ids=phonemes_padded,
             phoneme_lengths=phoneme_lengths,
@@ -134,4 +148,5 @@ class UtteranceCollate:
             spectrogram_lengths=spec_lengths,
             audios=audio_padded,
             audio_lengths=audio_lengths,
+            f0s=f0_padded,
         )

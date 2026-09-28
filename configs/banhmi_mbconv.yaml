@@ -1,0 +1,86 @@
+# New novelty direction (replaces the earlier MarGan/Vocos-refiner
+# direction, which is not used here): MobileNetV2-style inverted-residual
+# blocks (Sandler et al. 2018) inside the HiFi-GAN generator's upsample
+# stages, in place of ResBlock1/ResBlock2's parallel dilated-conv MRF. See
+# banhmi_train/vits/utils/resblocks.py's `ResBlockInverted` docstring for
+# the block itself, and test_function/compare_generators.py for the
+# overfit-test sweep that picked this exact config (expansion=6, kernel=3,
+# blocks_per_stage=2 -- Generator's own defaults for resblock="mb", not
+# repeated here as separate knobs) before it was wired in here: at a
+# matched parameter budget (~2.14M vs baseline's 2.24M) and after fixing a
+# training-instability bug (zero-init the block's last pointwise conv so it
+# starts as an identity no-op), this beat plain HiFi-GAN resblock "2" by
+# ~14% on val loss_mel, consistently across two learning rates, three
+# expansion ratios, and 800/1500-step overfit budgets.
+#
+# Usage:
+#   python -m banhmi_train.train --dataset-dir <dir> --config configs/banhmi_mbconv.yaml --batch-size <N> --max-epochs 100 ...
+
+# TextEncoder / PosteriorEncoder / Flow / DurationPredictor width -- same as
+# configs/default.yaml, unchanged by this novelty (generator-only change).
+hidden_channels: 192
+inter_channels: 192
+filter_channels: 768
+n_heads: 2
+n_layers: 6
+kernel_size: 3
+p_dropout: 0.1
+
+# Generator: resblock "mb" selects ResBlockInverted (see module docstring
+# for kernel/blocks_per_stage defaults). resblock_kernel_sizes/
+# resblock_dilation_sizes below are ignored in this mode (Generator still
+# requires them positionally) -- left at the medium-tier values for when
+# switching back to resblock "2".
+resblock: "mb"
+# Per-stage expansion, not the uniform 6 this config used originally.
+# RTF profiling (real forward-pass benchmark, not FLOPs) found the last
+# upsample stage (T=8192, the full-sample-rate stage) is where an inverted-
+# residual block's expand/project pointwise convs cost the most -- ~47ms of
+# an ~84ms total forward pass at uniform expansion=6 was that one stage's
+# resblock alone. (4,4,1) was the best of several per-stage schedules tried
+# via overfit-test: 1,943,424 params, loss_mel beats plain resblock "2" by
+# ~11% AND is faster than it (~17.6ms/call vs ~24.4ms/call on CPU,
+# single-threaded) -- uniform expansion=6 was ~3x *slower* than resblock
+# "2" despite fewer params, which this fixes.
+mb_expansion: [4, 4, 1]
+resblock_kernel_sizes: [3, 5, 7]
+resblock_dilation_sizes: [[1, 2], [2, 6], [3, 12]]
+upsample_rates: [8, 8, 4]
+upsample_initial_channel: 256
+upsample_kernel_sizes: [16, 16, 8]
+
+# ResBlockInverted uses SnakeBeta internally regardless of this flag (see
+# its own constructor), but pre_up_snakes/final_snake elsewhere in Generator
+# only use SnakeBeta when this is true -- must be true here to match the
+# validated overfit-test config, which used SnakeBeta throughout.
+use_snake: true
+
+# Flow (ResidualCouplingBlock) -- always VITS2-style transformer-in-flow,
+# no plain-WN-flow toggle exists anymore.
+flow_kernel_size: 5
+flow_dilation_rate: 1
+flow_n_flows: 4
+
+# VITS2's noise-scaled MAS -- always active (no toggle), anneals from
+# initial to 0 over training via these two knobs.
+mas_noise_scale_initial: 0.01
+mas_noise_scale_decay: 0.000002
+
+# PosteriorEncoder (training-only, discarded before ONNX export) -- matches
+# EdgeTTS/vanilla Piper's own hardcoded WaveNet depth of 16.
+posterior_encoder_kernel_size: 5
+posterior_encoder_dilation_rate: 1
+posterior_encoder_layers: 16
+
+# MRD -- ON. Originally left off here to match configs/default.yaml and
+# isolate the generator-architecture change as the only variable vs the
+# "hifigan" baseline overfit-tests -- but that "MRD is independent of this
+# novelty" assumption was never itself tested (unlike expansion/kernel/
+# blocks_per_stage/zero-init, all validated by overfit-test before this file
+# existed). EdgeTTS's Config H (this project's own established precedent for
+# "HiFi-GAN + Snake done well") bundles Snake with MRD rather than testing
+# them apart, so enabling both together here matches that precedent instead
+# of guessing they're separable. mrd_coeff for this non-Vocos path is
+# banhmi_train/vits/training.py's own default (1.0, equal-weight sum with
+# the MPD losses) -- no override needed here.
+use_mrd: true

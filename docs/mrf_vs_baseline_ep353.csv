@@ -1,0 +1,4 @@
+﻿Model,Checkpoint,% Training hoàn thành,WER (mean) ↓,UTMOSv2 (mean) ↑,RTF (mean, CPU) ↓,Ghi chú
+HiFi-GAN baseline (resblock=2),"epoch=1489/1500, val_loss_mel=19.7882",99% (hội tụ đầy đủ),0.1197,3.139,0.0431,Mốc so sánh chính
+MRF (resblock=mrf, expansion=1,1,1) + MRD,"epoch=353/500, val_loss_mel=20.6633",71%,0.1013,3.297,0.0554,"Training vẫn đang chạy song song lúc eval - RTF nghi vẫn bị nhiễu tải (xem lịch sử §7 report)"
+Chênh lệch (MRF - baseline),,,-0.0184 (TỐT HƠN ~15%),+0.158 (TỐT HƠN ~5%),+0.0123 (chậm hơn ~29%),"MRF thắng cả WER lẫn UTMOSv2 dù mới train 71% so với baseline 99%"

@@ -1,0 +1,58 @@
+# Same TextEncoder/PosteriorEncoder/Flow/DurationPredictor width as
+# banhmiv1.yaml (full VITS2 recipe: transformer-in-flow coupling + duration
+# discriminator + noise-scaled MAS, always on, no toggle) -- the only
+# difference is the Generator/discriminator pair: Vocos (ConvNeXt backbone
+# + ISTFT head, banhmi_train/Vocos/) instead of the HiFi-GAN-family
+# Generator + MPD/MRD. Benchmarked in test_function/ as both faster
+# (~3x Generator fwd+bwd, ~41% lighter discriminator D-step) and lower
+# loss_mel than banhmiv1.yaml's use_snake+use_mrd recipe -- see
+# conversation/commit history for the actual numbers, not re-derived here.
+#
+# use_vocos overrides use_snake/use_mrd/resblock/upsample_* entirely (all
+# omitted below -- VocosGenerator has no Snake/LeakyReLU choice and never
+# upsamples via ConvTranspose1d, so those keys would be silently unused).
+#
+# Usage:
+#   python -m banhmi_train.train --dataset-dir <dir> --config configs/banhmi_vocos.yaml --batch-size <N> ...
+
+# TextEncoder / PosteriorEncoder / Flow / DurationPredictor width
+hidden_channels: 192
+inter_channels: 192
+filter_channels: 768
+n_heads: 2
+n_layers: 6
+kernel_size: 3
+p_dropout: 0.1
+
+# Vocos Generator + Vocos's own discriminators (5-branch MPD without
+# DiscriminatorS + DAC-style multi-band MultiResolutionDiscriminator),
+# always paired together -- not optional the way use_mrd is for the
+# HiFi-GAN-family recipe. dim/intermediate_dim/num_layers match the
+# released Vocos 24kHz checkpoint's own config (~13.9M Generator params).
+use_vocos: true
+vocos_dim: 512
+vocos_intermediate_dim: 1536
+vocos_num_layers: 8
+
+# Hinge loss (banhmi_train/Vocos/losses.py), not this project's usual LSGAN
+# -- required pairing for Vocos's discriminators, verified against
+# vocos/experiment.py's training_step. mrd_loss_coeff matches the actual
+# released 24kHz checkpoint's config (the class's own default is 1.0).
+vocos_mrd_loss_coeff: 0.1
+
+# Flow (ResidualCouplingBlock) -- always VITS2-style transformer-in-flow,
+# no plain-WN-flow toggle exists anymore.
+flow_kernel_size: 5
+flow_dilation_rate: 1
+flow_n_flows: 4
+
+# VITS2's noise-scaled MAS -- always active (no toggle), anneals from
+# initial to 0 over training via these two knobs.
+mas_noise_scale_initial: 0.01
+mas_noise_scale_decay: 0.000002
+
+# PosteriorEncoder (training-only, discarded before ONNX export) -- matches
+# EdgeTTS/vanilla Piper's own hardcoded WaveNet depth of 16.
+posterior_encoder_kernel_size: 5
+posterior_encoder_dilation_rate: 1
+posterior_encoder_layers: 16

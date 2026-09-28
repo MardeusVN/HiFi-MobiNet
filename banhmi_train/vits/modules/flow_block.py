@@ -12,10 +12,9 @@ from ..utils.wavenet import WN
 
 
 class TransformerCouplingLayer(nn.Module):
-    """VITS2-style residual coupling layer: same affine-coupling math as
-    flows.ResidualCouplingLayer, but the conditioner network (which
-    predicts the affine params from x0) gets an extra self-attention pass
-    for global context, on top of the existing WaveNet-style conv stack.
+    """VITS2-style residual coupling layer: a WaveNet-style conv stack
+    predicts an affine transform of one half of the channels from the
+    other half, with a self-attention pass added for global context.
 
     Invertibility is unaffected: x1 is still an invertible affine function
     of x0 alone; making the *function that computes the affine params*
@@ -55,8 +54,11 @@ class TransformerCouplingLayer(nn.Module):
     def forward(self, x: torch.Tensor, x_mask: torch.Tensor, g=None, reverse: bool = False):
         x0, x1 = torch.split(x, [self.half_channels] * 2, 1)
         h = self.pre(x0) * x_mask
-        h = self.enc(h, x_mask, g=g)
+        # Attention before WaveNet -- matches EdgeTTS's own TransformerCouplingLayer
+        # and the VITS2 reference implementation's ResidualCouplingTransformersLayer2
+        # (github.com/p0p4k/vits2_pytorch), verified directly against both.
         h = h + self.attn(h, x_mask)
+        h = self.enc(h, x_mask, g=g)
         stats = self.post(h) * x_mask
         if self.mean_only:
             m, logs = stats, torch.zeros_like(stats)
@@ -71,6 +73,9 @@ class TransformerCouplingLayer(nn.Module):
         x1 = (x1 - m) * torch.exp(-logs) * x_mask
         return torch.cat([x0, x1], 1)
 
+    def remove_weight_norm(self):
+        self.enc.remove_weight_norm()
+
 
 class ResidualCouplingBlock(nn.Module):
     def __init__(
@@ -83,38 +88,22 @@ class ResidualCouplingBlock(nn.Module):
         n_flows: int = 4,
         gin_channels: int = 0,
         n_heads: int = 2,
-        use_transformer_flows: bool = True,
     ):
         super().__init__()
         self.flows = nn.ModuleList()
         for _ in range(n_flows):
-            if use_transformer_flows:
-                self.flows.append(
-                    TransformerCouplingLayer(
-                        channels,
-                        hidden_channels,
-                        kernel_size,
-                        dilation_rate,
-                        n_layers,
-                        n_heads=n_heads,
-                        gin_channels=gin_channels,
-                        mean_only=True,
-                    )
+            self.flows.append(
+                TransformerCouplingLayer(
+                    channels,
+                    hidden_channels,
+                    kernel_size,
+                    dilation_rate,
+                    n_layers,
+                    n_heads=n_heads,
+                    gin_channels=gin_channels,
+                    mean_only=True,
                 )
-            else:
-                from ..utils.flows import ResidualCouplingLayer
-
-                self.flows.append(
-                    ResidualCouplingLayer(
-                        channels,
-                        hidden_channels,
-                        kernel_size,
-                        dilation_rate,
-                        n_layers,
-                        gin_channels=gin_channels,
-                        mean_only=True,
-                    )
-                )
+            )
             self.flows.append(Flip())
 
     def forward(self, x: torch.Tensor, x_mask: torch.Tensor, g=None, reverse: bool = False):
@@ -125,3 +114,8 @@ class ResidualCouplingBlock(nn.Module):
             else:
                 x = flow(x, x_mask, g=g, reverse=reverse)
         return x
+
+    def remove_weight_norm(self):
+        for flow in self.flows:
+            if hasattr(flow, "remove_weight_norm"):
+                flow.remove_weight_norm()

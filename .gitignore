@@ -19,3 +19,5 @@ __pycache__/
 
 # Claude Code internal state
 .claude/
+data/
+output/
